@@ -1316,8 +1316,14 @@ function updateStats() {
 
 function getVisibleTasks() {
   if (!currentUser) return [];
-  if (canManage()) return tasks;
-  return tasks.filter(t => t.assignees.some(a => a.email.trim().toLowerCase() === currentUser.email.trim().toLowerCase()));
+  if (isAdmin()) return tasks;
+  const myEmail = currentUser.email.trim().toLowerCase();
+  return tasks.filter(t =>
+    // 自己建立的交辦事項
+    (t.assignerEmail && t.assignerEmail.trim().toLowerCase() === myEmail) ||
+    // 被指派的交辦事項
+    t.assignees.some(a => a.email.trim().toLowerCase() === myEmail)
+  );
 }
 
 function renderTaskCard(task) {
@@ -1399,7 +1405,9 @@ function showTaskDetail(taskId) {
   const dl = getDaysLeft(task.dueDate);
   const overdue = dl < 0 && task.status !== 'done' && task.status !== 'cancelled';
   const isMyTask = task.assignees.some(a => a.email.trim().toLowerCase() === currentUser.email.trim().toLowerCase());
-  const canEdit = canManage() || (task.assignerEmail && task.assignerEmail.trim().toLowerCase() === currentUser.email.trim().toLowerCase());
+  const myEmail = currentUser.email.trim().toLowerCase();
+  const isCreator = task.assignerEmail && task.assignerEmail.trim().toLowerCase() === myEmail;
+  const canEdit = isAdmin() || (canManage() && isCreator);
 
   document.getElementById('modalTitle').textContent = task.id + ' - ' + task.title;
 
@@ -1498,9 +1506,11 @@ function addProgressLog(taskId) {
 }
 
 function editTask(taskId) {
-  if (!canManage()) { showToast('您沒有編輯權限', 'error'); return; }
   const task = tasks.find(t => t.id === taskId);
   if (!task) return;
+  const myEmail = currentUser.email.trim().toLowerCase();
+  const isCreator = task.assignerEmail && task.assignerEmail.trim().toLowerCase() === myEmail;
+  if (!isAdmin() && !(canManage() && isCreator)) { showToast('您只能編輯自己建立的交辦事項', 'error'); return; }
   closeModal();
   editingTaskId = taskId;
   document.getElementById('taskTitle').value = task.title;
@@ -1519,14 +1529,20 @@ function editTask(taskId) {
 }
 
 function duplicateTask(taskId) {
+  if (!canManage()) { showToast('您沒有複製交辦事項的權限', 'error'); return; }
   const task = tasks.find(t => t.id === taskId);
   if (!task) return;
-  const nt = { ...JSON.parse(JSON.stringify(task)), id: generateId(), status: 'pending', progress: 0, progressLog: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+  const nt = { ...JSON.parse(JSON.stringify(task)), id: generateId(), assignerEmail: currentUser.email, assigner: currentUser.name, status: 'pending', progress: 0, progressLog: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
   tasks.unshift(nt); saveTasks(); updateStats(); closeModal();
   showToast('交辦事項已複製！新 ID: ' + nt.id);
 }
 
 function deleteTask(taskId) {
+  const task = tasks.find(t => t.id === taskId);
+  if (!task) return;
+  const myEmail = currentUser.email.trim().toLowerCase();
+  const isCreator = task.assignerEmail && task.assignerEmail.trim().toLowerCase() === myEmail;
+  if (!isAdmin() && !(canManage() && isCreator)) { showToast('您只能刪除自己建立的交辦事項', 'error'); return; }
   if (!confirm('確定要刪除此交辦事項嗎？此操作無法復原。')) return;
   tasks = tasks.filter(t => t.id !== taskId);
   saveTasks(); updateStats(); closeModal(); renderTaskList();
