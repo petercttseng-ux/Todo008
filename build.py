@@ -626,6 +626,18 @@ body {{
 .empty-state p {{ font-size: 15px; }}
 .no-data {{ text-align: center; padding: 40px; color: var(--text-light); font-size: 14px; }}
 
+/* Cloud Sync */
+.sync-status {{ display: inline-flex; align-items: center; gap: 6px; font-size: 11px; padding: 4px 10px; border-radius: 20px; background: rgba(255,255,255,0.15); color: rgba(255,255,255,0.9); }}
+.sync-dot {{ width: 8px; height: 8px; border-radius: 50%; }}
+.sync-dot.connected {{ background: #66bb6a; }}
+.sync-dot.disconnected {{ background: #ef5350; }}
+.sync-dot.syncing {{ background: #ffa726; animation: pulse 1s infinite; }}
+@keyframes pulse {{ 0%,100% {{ opacity:1; }} 50% {{ opacity:0.3; }} }}
+.cloud-setup-banner {{ background: linear-gradient(135deg, #fff3e0, #ffe0b2); border: 1.5px solid #ffb74d; border-radius: var(--radius); padding: 20px; margin-bottom: 20px; text-align: center; }}
+.cloud-setup-banner h3 {{ color: #e65100; margin-bottom: 8px; }}
+.cloud-setup-banner p {{ color: #bf360c; font-size: 13px; margin-bottom: 12px; }}
+.cloud-config-input {{ width: 100%; max-width: 500px; padding: 10px 14px; border: 1.5px solid var(--border); border-radius: var(--radius-sm); font-family: inherit; font-size: 13px; margin-bottom: 8px; }}
+
 /* User Management Table */
 .user-table {{
   width: 100%;
@@ -797,6 +809,7 @@ body {{
             <span class="user-name-display" id="userNameDisplay"></span>
             <span class="user-role-display" id="userRoleDisplay"></span>
           </div>
+          <span class="sync-status" id="syncStatus" style="display:none"><span class="sync-dot" id="syncDot"></span><span id="syncText"></span></span>
           <button class="logout-btn" onclick="showChangePwd()">&#x1f511; 改密碼</button>
           <button class="logout-btn" onclick="doLogout()">&#x1f6aa; 登出</button>
         </div>
@@ -818,6 +831,15 @@ body {{
   <div class="toast-container" id="toastContainer"></div>
 
   <div class="main-container">
+    <!-- Cloud Setup Banner (admin only) -->
+    <div id="cloudSetupBanner" class="cloud-setup-banner" style="display:none">
+      <h3>&#x2601;&#xfe0f; 尚未設定雲端同步</h3>
+      <p>目前資料僅存於本機瀏覽器，其他使用者無法看到交辦事項。<br>請設定 Firebase 資料庫以啟用多人協作。</p>
+      <input type="text" class="cloud-config-input" id="cloudDbUrl" placeholder="請貼上 Firebase Realtime Database 網址（例如：https://xxxx-default-rtdb.firebaseio.com）">
+      <br>
+      <button class="btn btn-primary" onclick="saveCloudConfig()" style="margin-top:4px">&#x2714; 儲存並啟用雲端同步</button>
+    </div>
+
     <!-- Dashboard -->
     <div class="view active" id="view-dashboard">
       <div class="dashboard-grid">
@@ -1074,6 +1096,160 @@ async function loadPersistedData() {{
   }}
 
   dbReady = true;
+
+  // 如果有雲端設定，從雲端拉取資料
+  const cloudUrl = localStorage.getItem('fri_cloud_url');
+  if (cloudUrl) {{
+    CLOUD_DB_URL = cloudUrl;
+    try {{
+      const res = await fetch(CLOUD_DB_URL + '/fri_data.json');
+      if (res.ok) {{
+        const data = await res.json();
+        if (data && data.tasks && data.tasks.length > 0) {{
+          tasks = data.tasks;
+          localStorage.setItem('fri_tasks', JSON.stringify(tasks));
+          idbSet('fri_tasks', tasks);
+        }}
+        if (data && data.users && Object.keys(data.users).length > 0) {{
+          users = data.users;
+          localStorage.setItem('fri_users', JSON.stringify(users));
+          idbSet('fri_users', users);
+        }}
+        console.log('[雲端同步] 初始載入完成，' + tasks.length + ' 筆交辦事項');
+      }}
+    }} catch(e) {{
+      console.error('[雲端同步] 初始載入失敗，使用本地資料:', e);
+    }}
+  }}
+}}
+
+// ===== CLOUD SYNC (Firebase Realtime Database) =====
+let CLOUD_DB_URL = localStorage.getItem('fri_cloud_url') || '';
+let cloudSyncTimer = null;
+let isSyncing = false;
+
+function updateSyncUI(state, text) {{
+  const el = document.getElementById('syncStatus');
+  const dot = document.getElementById('syncDot');
+  const txt = document.getElementById('syncText');
+  if (!el) return;
+  el.style.display = 'inline-flex';
+  dot.className = 'sync-dot ' + state;
+  txt.textContent = text;
+}}
+
+function saveCloudConfig() {{
+  let url = document.getElementById('cloudDbUrl').value.trim();
+  if (!url) {{ showToast('請輸入 Firebase 資料庫網址', 'error'); return; }}
+  // 正規化 URL
+  url = url.replace(/\\/+$/, '');
+  if (!url.startsWith('https://') || !url.includes('firebaseio.com')) {{
+    showToast('網址格式不正確，請確認是 Firebase Realtime Database 網址', 'error'); return;
+  }}
+  CLOUD_DB_URL = url;
+  localStorage.setItem('fri_cloud_url', url);
+  document.getElementById('cloudSetupBanner').style.display = 'none';
+  showToast('雲端同步已啟用！');
+  cloudPush().then(() => {{
+    startCloudSync();
+    updateSyncUI('connected', '已連線');
+  }});
+}}
+
+async function cloudPush() {{
+  if (!CLOUD_DB_URL || isSyncing) return;
+  isSyncing = true;
+  updateSyncUI('syncing', '同步中...');
+  try {{
+    const payload = {{ tasks: tasks, users: users, lastUpdate: new Date().toISOString() }};
+    const res = await fetch(CLOUD_DB_URL + '/fri_data.json', {{
+      method: 'PUT',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify(payload)
+    }});
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    updateSyncUI('connected', '已同步');
+  }} catch(e) {{
+    console.error('[雲端同步] 推送失敗:', e);
+    updateSyncUI('disconnected', '同步失敗');
+  }}
+  isSyncing = false;
+}}
+
+async function cloudPull() {{
+  if (!CLOUD_DB_URL || isSyncing) return;
+  try {{
+    const res = await fetch(CLOUD_DB_URL + '/fri_data.json');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if (!data || !data.tasks) return;
+
+    // 合併資料：雲端為主
+    const cloudTasks = data.tasks || [];
+    const cloudUsers = data.users || {{}};
+
+    // 如果雲端有較新資料，更新本地
+    if (cloudTasks.length > 0 || Object.keys(cloudUsers).length > 0) {{
+      // 以雲端為主，合併本地新增的項目
+      const cloudTaskIds = new Set(cloudTasks.map(t => t.id));
+      const localOnlyTasks = tasks.filter(t => !cloudTaskIds.has(t.id));
+
+      // 合併：雲端資料 + 本地獨有資料
+      tasks = [...cloudTasks];
+      if (localOnlyTasks.length > 0) {{
+        tasks = [...localOnlyTasks, ...tasks];
+      }}
+
+      // 合併使用者資料
+      if (Object.keys(cloudUsers).length > 0) {{
+        for (const [key, val] of Object.entries(cloudUsers)) {{
+          users[key] = val;
+        }}
+      }}
+
+      // 儲存到本地
+      localStorage.setItem('fri_tasks', JSON.stringify(tasks));
+      localStorage.setItem('fri_users', JSON.stringify(users));
+      idbSet('fri_tasks', tasks);
+      idbSet('fri_users', users);
+
+      // 更新畫面
+      if (currentUser) {{
+        updateStats();
+        const activeView = document.querySelector('.view.active');
+        if (activeView) {{
+          if (activeView.id === 'view-dashboard') renderDashboard();
+          if (activeView.id === 'view-list') renderTaskList();
+          if (activeView.id === 'view-mytasks') renderMyTasks();
+        }}
+      }}
+    }}
+    updateSyncUI('connected', '已同步');
+  }} catch(e) {{
+    console.error('[雲端同步] 拉取失敗:', e);
+    updateSyncUI('disconnected', '連線失敗');
+  }}
+}}
+
+function startCloudSync() {{
+  if (cloudSyncTimer) clearInterval(cloudSyncTimer);
+  if (!CLOUD_DB_URL) return;
+  // 每 15 秒自動同步
+  cloudSyncTimer = setInterval(cloudPull, 15000);
+  // 立即拉取一次
+  cloudPull();
+}}
+
+function showCloudBanner() {{
+  if (!CLOUD_DB_URL && currentUser && isAdmin()) {{
+    document.getElementById('cloudSetupBanner').style.display = 'block';
+  }} else {{
+    document.getElementById('cloudSetupBanner').style.display = 'none';
+  }}
+  if (CLOUD_DB_URL) {{
+    updateSyncUI('connected', '已連線');
+    startCloudSync();
+  }}
 }}
 
 // ===== USER MANAGEMENT =====
@@ -1104,10 +1280,12 @@ function initUsers() {{
 function saveUsers() {{
   localStorage.setItem('fri_users', JSON.stringify(users));
   idbSet('fri_users', users);
+  cloudPush();
 }}
 function saveTasks() {{
   localStorage.setItem('fri_tasks', JSON.stringify(tasks));
   idbSet('fri_tasks', tasks);
+  cloudPush();
 }}
 
 // ===== LOGIN =====
@@ -1227,6 +1405,7 @@ function enterApp() {{
   resetForm();
   updateStats();
   renderDashboard();
+  showCloudBanner();
 }}
 
 function doLogout() {{
