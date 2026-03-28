@@ -971,12 +971,90 @@ const ROLE_MAP = {
   executor: { label: '執行人', class: 'role-executor', icon: '&#x1f4dd;' }
 };
 
-let tasks = JSON.parse(localStorage.getItem('fri_tasks') || '[]');
-let users = JSON.parse(localStorage.getItem('fri_users') || '{}');
+let tasks = [];
+let users = {};
 let currentUser = JSON.parse(sessionStorage.getItem('fri_session') || 'null');
 let currentAssignees = [];
 let editingTaskId = null;
 let selectedRole = 'manager';
+let dbReady = false;
+
+// ===== IndexedDB 備份儲存（防止 localStorage 被清除） =====
+const DB_NAME = 'fri_backup';
+const DB_VERSION = 1;
+let idb = null;
+
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = function(e) {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains('kv')) {
+        db.createObjectStore('kv');
+      }
+    };
+    req.onsuccess = function(e) { idb = e.target.result; resolve(idb); };
+    req.onerror = function() { resolve(null); };
+  });
+}
+
+function idbSet(key, value) {
+  if (!idb) return;
+  try {
+    const tx = idb.transaction('kv', 'readwrite');
+    tx.objectStore('kv').put(value, key);
+  } catch(e) {}
+}
+
+function idbGet(key) {
+  return new Promise((resolve) => {
+    if (!idb) { resolve(null); return; }
+    try {
+      const tx = idb.transaction('kv', 'readonly');
+      const req = tx.objectStore('kv').get(key);
+      req.onsuccess = function() { resolve(req.result || null); };
+      req.onerror = function() { resolve(null); };
+    } catch(e) { resolve(null); }
+  });
+}
+
+// 從 localStorage 或 IndexedDB 還原資料
+async function loadPersistedData() {
+  await openDB();
+
+  // 嘗試請求持久化儲存權限
+  if (navigator.storage && navigator.storage.persist) {
+    navigator.storage.persist().catch(function(){});
+  }
+
+  // 讀取 tasks
+  const lsTasks = localStorage.getItem('fri_tasks');
+  if (lsTasks && lsTasks !== '[]') {
+    tasks = JSON.parse(lsTasks);
+  } else {
+    const idbTasks = await idbGet('fri_tasks');
+    if (idbTasks && idbTasks.length > 0) {
+      tasks = idbTasks;
+      localStorage.setItem('fri_tasks', JSON.stringify(tasks));
+      console.log('[資料還原] 從 IndexedDB 還原 ' + tasks.length + ' 筆交辦事項');
+    }
+  }
+
+  // 讀取 users
+  const lsUsers = localStorage.getItem('fri_users');
+  if (lsUsers && lsUsers !== '{}') {
+    users = JSON.parse(lsUsers);
+  } else {
+    const idbUsers = await idbGet('fri_users');
+    if (idbUsers && Object.keys(idbUsers).length > 0) {
+      users = idbUsers;
+      localStorage.setItem('fri_users', JSON.stringify(users));
+      console.log('[資料還原] 從 IndexedDB 還原使用者資料');
+    }
+  }
+
+  dbReady = true;
+}
 
 // ===== USER MANAGEMENT =====
 function initUsers() {
@@ -1003,8 +1081,14 @@ function initUsers() {
   }
 }
 
-function saveUsers() { localStorage.setItem('fri_users', JSON.stringify(users)); }
-function saveTasks() { localStorage.setItem('fri_tasks', JSON.stringify(tasks)); }
+function saveUsers() {
+  localStorage.setItem('fri_users', JSON.stringify(users));
+  idbSet('fri_users', users);
+}
+function saveTasks() {
+  localStorage.setItem('fri_tasks', JSON.stringify(tasks));
+  idbSet('fri_tasks', tasks);
+}
 
 // ===== LOGIN =====
 function initLoginDepts() {
@@ -1674,19 +1758,23 @@ document.getElementById('pwdModal').addEventListener('click', function(e) { if (
 document.addEventListener('keydown', function(e) { if (e.key === 'Escape') { closeModal(); closePwdModal(); } });
 
 // ===== INIT =====
-initUsers();
 initLoginDepts();
 
-// Check for existing session
-if (currentUser) {
-  const userKey = currentUser.email.trim().toLowerCase();
-  if (users[userKey] && users[userKey].active) {
-    enterApp();
-  } else {
-    sessionStorage.removeItem('fri_session');
-    currentUser = null;
+// 非同步載入持久化資料後再初始化
+loadPersistedData().then(() => {
+  initUsers();
+
+  // Check for existing session
+  if (currentUser) {
+    const userKey = currentUser.email.trim().toLowerCase();
+    if (users[userKey] && users[userKey].active) {
+      enterApp();
+    } else {
+      sessionStorage.removeItem('fri_session');
+      currentUser = null;
+    }
   }
-}
+});
 </script>
 </body>
 </html>
