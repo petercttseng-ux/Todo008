@@ -594,11 +594,13 @@ body {
 .overdue-item .overdue-info { font-size: 12px; color: var(--danger); margin-top: 2px; }
 
 .chart-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-.chart-bar-label { width: 80px; font-size: 12px; text-align: right; color: var(--text-light); }
-.chart-bar-track { flex: 1; height: 24px; background: #eceff1; border-radius: 12px; overflow: hidden; }
+.chart-bar-label { width: 80px; font-size: 12px; text-align: right; color: var(--text-light); flex-shrink: 0; }
+.chart-bar-track { flex: 1; height: 24px; background: #eceff1; border-radius: 12px; position: relative; display: flex; align-items: center; }
 .chart-bar-fill {
-  height: 100%; border-radius: 12px; display: flex; align-items: center; padding-left: 10px;
-  font-size: 12px; color: white; font-weight: 500; transition: width 0.5s ease;
+  height: 100%; border-radius: 12px; transition: width 0.5s ease; min-width: 0;
+}
+.chart-bar-value {
+  position: relative; margin-left: 8px; font-size: 12px; font-weight: 600; color: var(--text); flex-shrink: 0;
 }
 
 .empty-state { text-align: center; padding: 60px 20px; color: var(--text-light); }
@@ -1639,11 +1641,11 @@ function renderDashboard() {
   const sc = { pending: vt.filter(t=>t.status==='pending').length, progress: vt.filter(t=>t.status==='progress').length, review: vt.filter(t=>t.status==='review').length, done: vt.filter(t=>t.status==='done').length, cancelled: vt.filter(t=>t.status==='cancelled').length };
   const total = vt.length || 1;
   const sColors = { pending:'#ef5350', progress:'#42a5f5', review:'#ffa726', done:'#66bb6a', cancelled:'#90a4ae' };
-  document.getElementById('statusChart').innerHTML = Object.entries(sc).map(([k,v]) => '<div class="chart-bar"><span class="chart-bar-label">' + STATUS_MAP[k].label + '</span><div class="chart-bar-track"><div class="chart-bar-fill" style="width:' + (v/total*100) + '%;background:' + sColors[k] + '">' + v + '</div></div></div>').join('');
+  document.getElementById('statusChart').innerHTML = Object.entries(sc).map(([k,v]) => '<div class="chart-bar"><span class="chart-bar-label">' + STATUS_MAP[k].label + '</span><div class="chart-bar-track"><div class="chart-bar-fill" style="width:' + (v/total*100) + '%;background:' + sColors[k] + '"></div><span class="chart-bar-value">' + v + '</span></div></div>').join('');
 
   const pc = { urgent: vt.filter(t=>t.priority==='urgent').length, high: vt.filter(t=>t.priority==='high').length, medium: vt.filter(t=>t.priority==='medium').length, low: vt.filter(t=>t.priority==='low').length };
   const pColors = { urgent:'#c62828', high:'#e65100', medium:'#1565c0', low:'#2e7d32' };
-  document.getElementById('priorityChart').innerHTML = Object.entries(pc).map(([k,v]) => '<div class="chart-bar"><span class="chart-bar-label">' + PRIORITY_MAP[k].label + '</span><div class="chart-bar-track"><div class="chart-bar-fill" style="width:' + (v/total*100) + '%;background:' + pColors[k] + '">' + v + '</div></div></div>').join('');
+  document.getElementById('priorityChart').innerHTML = Object.entries(pc).map(([k,v]) => '<div class="chart-bar"><span class="chart-bar-label">' + PRIORITY_MAP[k].label + '</span><div class="chart-bar-track"><div class="chart-bar-fill" style="width:' + (v/total*100) + '%;background:' + pColors[k] + '"></div><span class="chart-bar-value">' + v + '</span></div></div>').join('');
 
   const oi = vt.filter(t => t.status !== 'done' && t.status !== 'cancelled').map(t => ({ ...t, daysLeft: getDaysLeft(t.dueDate) })).filter(t => t.daysLeft <= 7).sort((a,b) => a.daysLeft - b.daysLeft);
   document.getElementById('overdueList').innerHTML = oi.length === 0 ? '<div class="no-data">&#x2705; 目前沒有逾期或即將到期的項目</div>' : oi.map(t => '<div class="overdue-item" onclick="showTaskDetail(\''+t.id+'\')" style="cursor:pointer"><div class="task-name">' + escapeHtml(t.title) + ' <span class="task-id">' + t.id + '</span></div><div class="overdue-info">' + (t.daysLeft < 0 ? '&#x26a0; 已逾期 ' + Math.abs(t.daysLeft) + ' 天' : '&#x23f0; 剩餘 ' + t.daysLeft + ' 天（' + t.dueDate + '）') + '</div></div>').join('');
