@@ -627,7 +627,8 @@ body {{
 .no-data {{ text-align: center; padding: 40px; color: var(--text-light); font-size: 14px; }}
 
 /* Cloud Sync */
-.sync-status {{ display: inline-flex; align-items: center; gap: 6px; font-size: 11px; padding: 4px 10px; border-radius: 20px; background: rgba(255,255,255,0.15); color: rgba(255,255,255,0.9); }}
+.sync-status {{ display: inline-flex; align-items: center; gap: 6px; font-size: 11px; padding: 4px 10px; border-radius: 20px; background: rgba(255,255,255,0.15); color: rgba(255,255,255,0.9); cursor: pointer; }}
+.sync-status:hover {{ background: rgba(255,255,255,0.3); }}
 .sync-dot {{ width: 8px; height: 8px; border-radius: 50%; }}
 .sync-dot.connected {{ background: #66bb6a; }}
 .sync-dot.disconnected {{ background: #ef5350; }}
@@ -809,7 +810,7 @@ body {{
             <span class="user-name-display" id="userNameDisplay"></span>
             <span class="user-role-display" id="userRoleDisplay"></span>
           </div>
-          <span class="sync-status" id="syncStatus" style="display:none"><span class="sync-dot" id="syncDot"></span><span id="syncText"></span></span>
+          <span class="sync-status" id="syncStatus" style="display:none" onclick="showCloudSettings()" title="點擊可重新設定雲端同步"><span class="sync-dot" id="syncDot"></span><span id="syncText"></span></span>
           <button class="logout-btn" onclick="showChangePwd()">&#x1f511; 改密碼</button>
           <button class="logout-btn" onclick="doLogout()">&#x1f6aa; 登出</button>
         </div>
@@ -1233,6 +1234,23 @@ function showCloudBanner() {{
   if (CLOUD_DB_URL) {{
     updateSyncUI('connected', '已連線');
     startCloudSync();
+  }}
+}}
+
+function showCloudSettings() {{
+  const action = confirm(
+    '目前雲端同步網址：\\n' + (CLOUD_DB_URL || '（未設定）') +
+    '\\n\\n點擊「確定」可重新設定網址，\\n點擊「取消」維持現狀。'
+  );
+  if (action) {{
+    CLOUD_DB_URL = '';
+    localStorage.removeItem('fri_cloud_url');
+    if (cloudSyncTimer) {{ clearInterval(cloudSyncTimer); cloudSyncTimer = null; }}
+    document.getElementById('syncStatus').style.display = 'none';
+    document.getElementById('cloudDbUrl').value = '';
+    document.getElementById('cloudSetupBanner').style.display = 'block';
+    switchView('dashboard', document.querySelector('.nav-btn[data-view="dashboard"]'));
+    showToast('請重新輸入雲端資料庫網址');
   }}
 }}
 
