@@ -835,19 +835,26 @@ body {{
     <!-- Cloud Setup Banner -->
     <div id="cloudSetupBanner" class="cloud-setup-banner" style="display:none">
       <h3>&#x2601;&#xfe0f; 啟用雲端同步（多人共享資料）</h3>
-      <p>目前資料僅存於本機瀏覽器，其他電腦無法看到交辦事項。</p>
-      <div id="cloudSetupGuide" style="text-align:left;font-size:13px;color:#4e342e;margin:12px auto;max-width:520px;background:#fff8e1;padding:14px;border-radius:8px">
-        <strong>Firebase 免費設定步驟（僅需一次）：</strong>
-        <ol style="margin:8px 0 12px 18px;line-height:2">
-          <li>前往 <a href="https://console.firebase.google.com/" target="_blank" style="color:#1565c0">console.firebase.google.com</a> 登入 Google 帳號</li>
-          <li>點選「新增專案」&#x2192; 輸入名稱（如 fri-todo）&#x2192; 建立</li>
-          <li>左側選「Realtime Database」&#x2192;「建立資料庫」&#x2192; 選「以測試模式啟動」</li>
-          <li>複製資料庫網址（格式：https://xxx-default-rtdb.firebaseio.com）</li>
-          <li>貼到下方欄位，點擊「啟用」即完成！</li>
-        </ol>
-        <strong>&#x1f4e2; 其他同仁也需在下方貼上相同網址（僅需一次）</strong>
+      <!-- 管理員：完整 Firebase 設定指引 -->
+      <div id="cloudGuideAdmin" style="display:none">
+        <p>目前資料僅存於本機瀏覽器，其他電腦無法看到交辦事項。</p>
+        <div style="text-align:left;font-size:13px;color:#4e342e;margin:12px auto;max-width:520px;background:#fff8e1;padding:14px;border-radius:8px">
+          <strong>Firebase 免費設定步驟（僅需一次）：</strong>
+          <ol style="margin:8px 0 12px 18px;line-height:2">
+            <li>前往 <a href="https://console.firebase.google.com/" target="_blank" style="color:#1565c0">console.firebase.google.com</a> 登入 Google 帳號</li>
+            <li>點選「新增專案」&#x2192; 輸入名稱（如 fri-todo）&#x2192; 建立</li>
+            <li>左側選「Realtime Database」&#x2192;「建立資料庫」&#x2192; 選「以測試模式啟動」</li>
+            <li>複製資料庫網址（格式：https://xxx-default-rtdb.firebaseio.com）</li>
+            <li>貼到下方欄位，點擊「啟用」即完成！</li>
+          </ol>
+          <strong>&#x1f4e2; 設定完成後，請將網址提供給所有同仁貼上</strong>
+        </div>
       </div>
-      <input type="text" class="cloud-config-input" id="cloudDbUrl" placeholder="貼上 Firebase 資料庫網址">
+      <!-- 一般同仁：簡化版 -->
+      <div id="cloudGuideUser" style="display:none">
+        <p style="font-size:15px;margin-bottom:4px">請向管理員索取雲端資料庫網址，貼上後即可同步所有交辦事項。</p>
+      </div>
+      <input type="text" class="cloud-config-input" id="cloudDbUrl" placeholder="貼上管理員提供的 Firebase 資料庫網址">
       <br>
       <button class="btn btn-primary" onclick="saveCloudConfig()" style="margin-top:4px">&#x2601;&#xfe0f; 啟用雲端同步</button>
     </div>
@@ -1228,6 +1235,16 @@ function showCloudBanner() {{
   const banner = document.getElementById('cloudSetupBanner');
   if (!CLOUD_DB_URL && currentUser) {{
     banner.style.display = 'block';
+    // 依角色顯示對應指引
+    const adminGuide = document.getElementById('cloudGuideAdmin');
+    const userGuide = document.getElementById('cloudGuideUser');
+    if (isAdmin()) {{
+      adminGuide.style.display = 'block';
+      userGuide.style.display = 'none';
+    }} else {{
+      adminGuide.style.display = 'none';
+      userGuide.style.display = 'block';
+    }}
   }} else {{
     banner.style.display = 'none';
   }}
