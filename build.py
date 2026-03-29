@@ -831,13 +831,24 @@ body {{
   <div class="toast-container" id="toastContainer"></div>
 
   <div class="main-container">
-    <!-- Cloud Setup Banner (admin only) -->
+    <!-- Cloud Setup Banner -->
     <div id="cloudSetupBanner" class="cloud-setup-banner" style="display:none">
-      <h3>&#x2601;&#xfe0f; 尚未設定雲端同步</h3>
-      <p>目前資料僅存於本機瀏覽器，其他使用者無法看到交辦事項。<br>請設定 Firebase 資料庫以啟用多人協作。</p>
-      <input type="text" class="cloud-config-input" id="cloudDbUrl" placeholder="請貼上 Firebase Realtime Database 網址（例如：https://xxxx-default-rtdb.firebaseio.com）">
+      <h3>&#x2601;&#xfe0f; 啟用雲端同步（多人共享資料）</h3>
+      <p>目前資料僅存於本機瀏覽器，其他電腦無法看到交辦事項。</p>
+      <div id="cloudSetupGuide" style="text-align:left;font-size:13px;color:#4e342e;margin:12px auto;max-width:520px;background:#fff8e1;padding:14px;border-radius:8px">
+        <strong>Firebase 免費設定步驟（僅需一次）：</strong>
+        <ol style="margin:8px 0 12px 18px;line-height:2">
+          <li>前往 <a href="https://console.firebase.google.com/" target="_blank" style="color:#1565c0">console.firebase.google.com</a> 登入 Google 帳號</li>
+          <li>點選「新增專案」&#x2192; 輸入名稱（如 fri-todo）&#x2192; 建立</li>
+          <li>左側選「Realtime Database」&#x2192;「建立資料庫」&#x2192; 選「以測試模式啟動」</li>
+          <li>複製資料庫網址（格式：https://xxx-default-rtdb.firebaseio.com）</li>
+          <li>貼到下方欄位，點擊「啟用」即完成！</li>
+        </ol>
+        <strong>&#x1f4e2; 其他同仁也需在下方貼上相同網址（僅需一次）</strong>
+      </div>
+      <input type="text" class="cloud-config-input" id="cloudDbUrl" placeholder="貼上 Firebase 資料庫網址">
       <br>
-      <button class="btn btn-primary" onclick="saveCloudConfig()" style="margin-top:4px">&#x2714; 儲存並啟用雲端同步</button>
+      <button class="btn btn-primary" onclick="saveCloudConfig()" style="margin-top:4px">&#x2601;&#xfe0f; 啟用雲端同步</button>
     </div>
 
     <!-- Dashboard -->
@@ -1101,29 +1112,11 @@ async function loadPersistedData() {{
   const cloudUrl = localStorage.getItem('fri_cloud_url');
   if (cloudUrl) {{
     CLOUD_DB_URL = cloudUrl;
-    try {{
-      const res = await fetch(CLOUD_DB_URL + '/fri_data.json');
-      if (res.ok) {{
-        const data = await res.json();
-        if (data && data.tasks && data.tasks.length > 0) {{
-          tasks = data.tasks;
-          localStorage.setItem('fri_tasks', JSON.stringify(tasks));
-          idbSet('fri_tasks', tasks);
-        }}
-        if (data && data.users && Object.keys(data.users).length > 0) {{
-          users = data.users;
-          localStorage.setItem('fri_users', JSON.stringify(users));
-          idbSet('fri_users', users);
-        }}
-        console.log('[雲端同步] 初始載入完成，' + tasks.length + ' 筆交辦事項');
-      }}
-    }} catch(e) {{
-      console.error('[雲端同步] 初始載入失敗，使用本地資料:', e);
-    }}
+    await cloudPull();
   }}
 }}
 
-// ===== CLOUD SYNC (Firebase Realtime Database) =====
+// ===== CLOUD SYNC (Firebase Realtime Database REST API) =====
 let CLOUD_DB_URL = localStorage.getItem('fri_cloud_url') || '';
 let cloudSyncTimer = null;
 let isSyncing = false;
@@ -1139,20 +1132,21 @@ function updateSyncUI(state, text) {{
 }}
 
 function saveCloudConfig() {{
-  let url = document.getElementById('cloudDbUrl').value.trim();
+  let url = document.getElementById('cloudDbUrl').value.trim().replace(/\\/+$/, '');
   if (!url) {{ showToast('請輸入 Firebase 資料庫網址', 'error'); return; }}
-  // 正規化 URL
-  url = url.replace(/\\/+$/, '');
-  if (!url.startsWith('https://') || !url.includes('firebaseio.com')) {{
+  if (!url.includes('firebaseio.com') && !url.includes('firebasedatabase.app')) {{
     showToast('網址格式不正確，請確認是 Firebase Realtime Database 網址', 'error'); return;
   }}
+  if (!url.startsWith('https://')) url = 'https://' + url;
   CLOUD_DB_URL = url;
   localStorage.setItem('fri_cloud_url', url);
-  document.getElementById('cloudSetupBanner').style.display = 'none';
-  showToast('雲端同步已啟用！');
+  updateSyncUI('syncing', '連線中...');
   cloudPush().then(() => {{
+    document.getElementById('cloudSetupBanner').style.display = 'none';
     startCloudSync();
-    updateSyncUI('connected', '已連線');
+    showToast('雲端同步已啟用！請將此網址提供給其他同仁。');
+  }}).catch(() => {{
+    showToast('連線失敗，請確認網址是否正確', 'error');
   }});
 }}
 
@@ -1172,55 +1166,45 @@ async function cloudPush() {{
   }} catch(e) {{
     console.error('[雲端同步] 推送失敗:', e);
     updateSyncUI('disconnected', '同步失敗');
+    throw e;
+  }} finally {{
+    isSyncing = false;
   }}
-  isSyncing = false;
 }}
 
 async function cloudPull() {{
   if (!CLOUD_DB_URL || isSyncing) return;
+  isSyncing = true;
   try {{
     const res = await fetch(CLOUD_DB_URL + '/fri_data.json');
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
-    if (!data || !data.tasks) return;
+    if (!data || !data.tasks) {{ isSyncing = false; return; }}
 
-    // 合併資料：雲端為主
     const cloudTasks = data.tasks || [];
     const cloudUsers = data.users || {{}};
 
-    // 如果雲端有較新資料，更新本地
     if (cloudTasks.length > 0 || Object.keys(cloudUsers).length > 0) {{
-      // 以雲端為主，合併本地新增的項目
       const cloudTaskIds = new Set(cloudTasks.map(t => t.id));
       const localOnlyTasks = tasks.filter(t => !cloudTaskIds.has(t.id));
+      tasks = localOnlyTasks.length > 0 ? [...localOnlyTasks, ...cloudTasks] : [...cloudTasks];
 
-      // 合併：雲端資料 + 本地獨有資料
-      tasks = [...cloudTasks];
-      if (localOnlyTasks.length > 0) {{
-        tasks = [...localOnlyTasks, ...tasks];
-      }}
-
-      // 合併使用者資料
       if (Object.keys(cloudUsers).length > 0) {{
-        for (const [key, val] of Object.entries(cloudUsers)) {{
-          users[key] = val;
-        }}
+        for (const [key, val] of Object.entries(cloudUsers)) {{ users[key] = val; }}
       }}
 
-      // 儲存到本地
       localStorage.setItem('fri_tasks', JSON.stringify(tasks));
       localStorage.setItem('fri_users', JSON.stringify(users));
       idbSet('fri_tasks', tasks);
       idbSet('fri_users', users);
 
-      // 更新畫面
       if (currentUser) {{
         updateStats();
-        const activeView = document.querySelector('.view.active');
-        if (activeView) {{
-          if (activeView.id === 'view-dashboard') renderDashboard();
-          if (activeView.id === 'view-list') renderTaskList();
-          if (activeView.id === 'view-mytasks') renderMyTasks();
+        const av = document.querySelector('.view.active');
+        if (av) {{
+          if (av.id === 'view-dashboard') renderDashboard();
+          if (av.id === 'view-list') renderTaskList();
+          if (av.id === 'view-mytasks') renderMyTasks();
         }}
       }}
     }}
@@ -1229,22 +1213,22 @@ async function cloudPull() {{
     console.error('[雲端同步] 拉取失敗:', e);
     updateSyncUI('disconnected', '連線失敗');
   }}
+  isSyncing = false;
 }}
 
 function startCloudSync() {{
   if (cloudSyncTimer) clearInterval(cloudSyncTimer);
   if (!CLOUD_DB_URL) return;
-  // 每 15 秒自動同步
   cloudSyncTimer = setInterval(cloudPull, 15000);
-  // 立即拉取一次
   cloudPull();
 }}
 
 function showCloudBanner() {{
-  if (!CLOUD_DB_URL && currentUser && isAdmin()) {{
-    document.getElementById('cloudSetupBanner').style.display = 'block';
+  const banner = document.getElementById('cloudSetupBanner');
+  if (!CLOUD_DB_URL && currentUser) {{
+    banner.style.display = 'block';
   }} else {{
-    document.getElementById('cloudSetupBanner').style.display = 'none';
+    banner.style.display = 'none';
   }}
   if (CLOUD_DB_URL) {{
     updateSyncUI('connected', '已連線');
