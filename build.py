@@ -800,8 +800,8 @@ body {{
           <button class="nav-btn" onclick="switchView('mytasks', this)" data-view="mytasks" id="navMyTasks">&#x1f4cc; 我的任務</button>
           <button class="nav-btn" onclick="switchView('search', this)" data-view="search">&#x1f50d; 查詢追蹤</button>
           <button class="nav-btn" onclick="switchView('users', this)" data-view="users" id="navUsers">&#x1f465; 帳號管理</button>
-          <button class="nav-btn" onclick="exportData()">&#x1f4e5; 匯出</button>
-          <button class="nav-btn" onclick="document.getElementById('importFile').click()">&#x1f4e4; 匯入</button>
+          <button class="nav-btn" id="navExport" onclick="exportData()">&#x1f4e5; 匯出</button>
+          <button class="nav-btn" id="navImport" onclick="document.getElementById('importFile').click()">&#x1f4e4; 匯入</button>
           <input type="file" id="importFile" accept=".json" style="display:none" onchange="importData(event)">
         </div>
         <div class="user-bar">
@@ -1148,18 +1148,34 @@ function saveCloudConfig() {{
   if (!url.startsWith('https://')) url = 'https://' + url;
   CLOUD_DB_URL = url;
   localStorage.setItem('fri_cloud_url', url);
-  updateSyncUI('syncing', '連線中...');
-  cloudPush().then(() => {{
+  isSyncing = false; // 強制重置，確保連線測試一定執行
+  updateSyncUI('syncing', '連線測試中...');
+  cloudPush().then((ok) => {{
+    if (ok === false) return; // isSyncing 被其他流程佔用，稍後重試
     document.getElementById('cloudSetupBanner').style.display = 'none';
     startCloudSync();
     showToast('雲端同步已啟用！請將此網址提供給其他同仁。');
-  }}).catch(() => {{
-    showToast('連線失敗，請確認網址是否正確', 'error');
+  }}).catch((e) => {{
+    // 連線失敗：清除網址，避免下次啟動繼續嘗試無效連線
+    CLOUD_DB_URL = '';
+    localStorage.removeItem('fri_cloud_url');
+    updateSyncUI('disconnected', '未連線');
+    const msg = (e && e.message) ? e.message : '';
+    if (msg.includes('403') || msg.toLowerCase().includes('permission')) {{
+      showToast('連線失敗（403）：Firebase 規則未開放寫入，請將資料庫設為「測試模式」', 'error');
+    }} else if (msg.includes('401')) {{
+      showToast('連線失敗（401）：Firebase 需要驗證，請確認資料庫規則設定', 'error');
+    }} else if (msg.includes('404') || msg.includes('400')) {{
+      showToast('連線失敗：找不到資料庫，請確認網址是否正確', 'error');
+    }} else {{
+      showToast('連線失敗：請確認網址正確，且 Firebase 已開啟「測試模式」', 'error');
+    }}
   }});
 }}
 
 async function cloudPush() {{
-  if (!CLOUD_DB_URL || isSyncing) return;
+  if (!CLOUD_DB_URL) return;
+  if (isSyncing) return false; // 明確回傳 false 表示被跳過
   isSyncing = true;
   updateSyncUI('syncing', '同步中...');
   try {{
@@ -1169,7 +1185,11 @@ async function cloudPush() {{
       headers: {{ 'Content-Type': 'application/json' }},
       body: JSON.stringify(payload)
     }});
-    if (!res.ok) throw new Error('HTTP ' + res.status);
+    if (!res.ok) {{
+      let errMsg = 'HTTP ' + res.status;
+      try {{ const j = await res.clone().json(); if (j && j.error) errMsg = res.status + ' ' + j.error; }} catch(_) {{}}
+      throw new Error(errMsg);
+    }}
     updateSyncUI('connected', '已同步');
   }} catch(e) {{
     console.error('[雲端同步] 推送失敗:', e);
@@ -1265,8 +1285,8 @@ function showCloudSettings() {{
     if (cloudSyncTimer) {{ clearInterval(cloudSyncTimer); cloudSyncTimer = null; }}
     document.getElementById('syncStatus').style.display = 'none';
     document.getElementById('cloudDbUrl').value = '';
-    document.getElementById('cloudSetupBanner').style.display = 'block';
     switchView('dashboard', document.querySelector('.nav-btn[data-view="dashboard"]'));
+    showCloudBanner();
     showToast('請重新輸入雲端資料庫網址');
   }}
 }}
@@ -1415,7 +1435,9 @@ function enterApp() {{
 
   document.getElementById('navCreate').classList.toggle('hidden', !isManager);
   document.getElementById('navUsers').classList.toggle('hidden', !isAdmin);
-  document.getElementById('navMyTasks').classList.toggle('hidden', isManager && !isAdmin);
+  document.getElementById('navMyTasks').classList.toggle('hidden', false);
+  document.getElementById('navExport').classList.toggle('hidden', !isManager);
+  document.getElementById('navImport').classList.toggle('hidden', !isAdmin);
 
   // Auto-fill assigner
   document.getElementById('taskAssigner').value = currentUser.name;
